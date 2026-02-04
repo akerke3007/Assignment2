@@ -1,22 +1,21 @@
 package org.example;
+
 import java.util.Objects;
 
-public class Person {
-    public String name;
-    public int age;
+public abstract class Person {
+    private String name; // Encapsulation: өрістер private
+    private int age;
 
     public Person(String name, int age) {
         this.name = name;
         this.age = age;
     }
 
-    // Переопределяем toString, чтобы красиво выводить данные
-    @Override
-    public String toString() {
-        return "Name: " + name + ", Age: " + age;
-    }
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+    public int getAge() { return age; }
+    public void setAge(int age) { this.age = age; }
 
-    // Методы для сравнения объектов (требование задания)
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
