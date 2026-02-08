@@ -1,70 +1,164 @@
 package org.example;
 
 import io.javalin.Javalin;
-import java.sql.*;
+import io.javalin.http.staticfiles.Location;
+import org.example.domain.Athlete;
+import org.example.domain.SportFactory;
+import org.example.dto.ApiError;
+import org.example.dto.ApiOk;
+import org.example.dto.AthleteCreateDto;
+import org.example.dto.AthleteUpdateDto;
+import org.example.exception.DatabaseException;
+import org.example.exception.EntityNotFoundException;
+import org.example.repository.*;
+
+import java.nio.file.Paths;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.List;
 
 public class Main {
+
     public static void main(String[] args) {
-        String url = "jdbc:postgresql://localhost:5432/postgres";
+
+        String url  = "jdbc:postgresql://localhost:5432/project?currentSchema=public";
         String user = "postgres";
         String pass = "1234";
 
+        Connection conn = null;
+
         try {
-            Connection conn = DriverManager.getConnection(url, user, pass);
+            // ✅ Connection НЕ в try-with-resources, чтобы не закрылся сразу
+            conn = DriverManager.getConnection(url, user, pass);
 
-// 1. Кестелерді құру және деректерді SQL арқылы автоматты түрде салу
-            createTablesWithData(conn);
+            AthleteRepository athleteRepo = new JdbcAthleteRepository(conn);
+            SportRepository sportRepo = new JdbcSportRepository(conn);
+            ClubRepository clubRepo = new JdbcClubRepository(conn);
 
-// 2. Репозиторийді интерфейс арқылы баптау (SOLID: DIP)
-            IRepository<Athlete> athleteRepo = new AthleteDao(conn);
+            String staticDir = Paths.get(System.getProperty("user.dir"), "src/main/resources/public")
+                    .toAbsolutePath()
+                    .toString();
 
-// 3. Серверді іске қосу
-            Javalin app = Javalin.create().start(8080);
+            Javalin app = Javalin.create(config -> {
+                config.staticFiles.add(staticFiles -> {
+                    staticFiles.directory = staticDir;
+                    staticFiles.location = Location.EXTERNAL;
+                });
 
-// Роуттар (Endpoints)
-            app.get("/", ctx -> ctx.result("Welcome to Sports Club API!"));
-            app.get("/athletes", ctx -> ctx.json(athleteRepo.getAll()));
+                config.bundledPlugins.enableCors(cors ->
+                        cors.addRule(rule -> rule.anyHost())
+                );
+            }).start(8080);
 
-            System.out.println("\n✅ SERVER STARTED AT http://localhost:8080/athletes");
-            System.out.println("🚀 Data loaded successfully from SQL scripts inside Main.");
+            // ✅ Закрыть соединение при остановке приложения
+            Connection finalConn = conn;
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try {
+                    if (finalConn != null && !finalConn.isClosed()) {
+                        finalConn.close();
+                        System.out.println("DB connection closed.");
+                    }
+                } catch (SQLException ignored) {}
+            }));
+
+            // ===== ROUTES =====
+            app.get("/", ctx -> ctx.result("Sports Club API is running"));
+
+            app.get("/sports", ctx -> ctx.json(sportRepo.getAll()));
+            app.get("/clubs", ctx -> ctx.json(clubRepo.getAll()));
+
+            app.get("/athletes", ctx -> {
+                List<Athlete> list = athleteRepo.getAll();
+                ctx.json(list);
+            });
+
+            app.post("/athletes", ctx -> {
+                AthleteCreateDto dto = ctx.bodyAsClass(AthleteCreateDto.class);
+
+                Athlete athlete = new Athlete.Builder()
+                        .setName(dto.name)
+                        .setAge(dto.age)
+                        .setSport(SportFactory.create(dto.sportName, dto.team))
+                        .setClubName(dto.clubName)
+                        .setExperience(dto.experience)
+                        .build();
+
+                athleteRepo.insert(athlete);
+                ctx.status(201).json(new ApiOk("CREATED", "Athlete created"));
+            });
+
+            app.put("/athletes/{id}", ctx -> {
+                int id = Integer.parseInt(ctx.pathParam("id"));
+                AthleteUpdateDto dto = ctx.bodyAsClass(AthleteUpdateDto.class);
+
+                Athlete athlete = new Athlete.Builder()
+                        .setAthleteId(id)
+                        .setName(dto.name)
+                        .setAge(dto.age)
+                        .setSport(SportFactory.create(dto.sportName, dto.team))
+                        .setClubName(dto.clubName)
+                        .setExperience(dto.experience)
+                        .build();
+
+                athleteRepo.update(id, athlete);
+                ctx.json(new ApiOk("UPDATED", "Athlete updated"));
+            });
+
+            app.put("/athletes/{id}/experience", ctx -> {
+                int id = Integer.parseInt(ctx.pathParam("id"));
+
+                String valueStr = ctx.queryParam("value");
+                if (valueStr == null) throw new IllegalArgumentException("value is required");
+
+                int value = Integer.parseInt(valueStr);
+                if (value < 0) throw new IllegalArgumentException("experience must be >= 0");
+
+                athleteRepo.updateExperience(id, value);
+                ctx.json(new ApiOk("UPDATED", "Experience updated"));
+            });
+
+            app.delete("/athletes/{id}", ctx -> {
+                int id = Integer.parseInt(ctx.pathParam("id"));
+                athleteRepo.delete(id);
+                ctx.status(204);
+            });
+
+            // ===== ERROR HANDLERS =====
+            app.exception(NumberFormatException.class, (e, ctx) ->
+                    ctx.status(400).json(new ApiError("VALIDATION_ERROR", "id must be an integer"))
+            );
+
+            app.exception(IllegalArgumentException.class, (e, ctx) ->
+                    ctx.status(400).json(new ApiError("VALIDATION_ERROR", e.getMessage()))
+            );
+
+            app.exception(EntityNotFoundException.class, (e, ctx) ->
+                    ctx.status(404).json(new ApiError("NOT_FOUND", e.getMessage()))
+            );
+
+            app.exception(DatabaseException.class, (e, ctx) -> {
+                String msg = (e.getCause() != null) ? e.getCause().getMessage() : e.getMessage();
+                ctx.status(500).json(new ApiError("DB_ERROR", msg));
+            });
+
+            app.exception(Exception.class, (e, ctx) ->
+                    ctx.status(500).json(new ApiError("SERVER_ERROR", "Unexpected error"))
+            );
+
+            System.out.println("=================================");
+            System.out.println("SERVER STARTED");
+            System.out.println("Frontend: http://localhost:8080/index.html");
+            System.out.println("API:      http://localhost:8080/athletes");
+            System.out.println("DB:       project/public");
+            System.out.println("=================================");
 
         } catch (Exception e) {
-            System.err.println("❌ Critical Error: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-
-    public static void createTablesWithData(Connection conn) throws SQLException {
-        try (Statement st = conn.createStatement()) {
-// Ескі кестелерді өшіру
-            st.executeUpdate("DROP TABLE IF EXISTS athlete CASCADE");
-            st.executeUpdate("DROP TABLE IF EXISTS sport CASCADE");
-            st.executeUpdate("DROP TABLE IF EXISTS sports_club CASCADE");
-
-// Кестелерді құру
-            st.executeUpdate("CREATE TABLE sport (sport_id SERIAL PRIMARY KEY, name VARCHAR(100) NOT NULL, category VARCHAR(100))");
-            st.executeUpdate("CREATE TABLE sports_club (club_id SERIAL PRIMARY KEY, name VARCHAR(100) NOT NULL, city VARCHAR(100), founded_year INT)");
-            st.executeUpdate("CREATE TABLE athlete (athlete_id SERIAL PRIMARY KEY, name VARCHAR(100) NOT NULL, age INT, " +
-                    "sport_id INT REFERENCES sport(sport_id), " +
-                    "club_id INT REFERENCES sports_club(club_id), " +
-                    "experience INT)");
-
-// --- ДЕРЕКТЕРДІ ЕНГІЗУ (INSERT DATA) ---
-
-// Спорт түрлері
-            st.executeUpdate("INSERT INTO sport (name, category) VALUES ('Football', 'Team')");
-            st.executeUpdate("INSERT INTO sport (name, category) VALUES ('Tennis', 'Individual')");
-
-// Клубтар
-            st.executeUpdate("INSERT INTO sports_club (name, city, founded_year) VALUES ('Real Madrid', 'Madrid', 1902)");
-            st.executeUpdate("INSERT INTO sports_club (name, city, founded_year) VALUES ('Astana Qazaqstan', 'Astana', 2007)");
-
-// Атлеттер (sport_id және club_id сілтемелерімен)
-            st.executeUpdate("INSERT INTO athlete (name, age, sport_id, club_id, experience) VALUES ('Mbappe', 25, 1, 1, 7)");
-            st.executeUpdate("INSERT INTO athlete (name, age, sport_id, club_id, experience) VALUES ('Vinicius', 24, 1, 1, 6)");
-            st.executeUpdate("INSERT INTO athlete (name, age, sport_id, club_id, experience) VALUES ('Djokovic', 36, 2, 2, 20)");
-
-            System.out.println("✅ Database schema and initial data applied successfully.");
+            System.out.println("Startup error: " + e.getMessage());
+            // если соединение успели открыть — закроем
+            try {
+                if (conn != null && !conn.isClosed()) conn.close();
+            } catch (SQLException ignored) {}
         }
     }
 }

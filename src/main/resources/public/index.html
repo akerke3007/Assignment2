@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>Sports Club</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 30px auto;
+            padding: 0 15px;
+            background: #f7f9fc;
+        }
+        h1 { margin-bottom: 6px; }
+        .subtitle { color: #555; margin-bottom: 18px; }
+
+        .box {
+            background: #fff;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 14px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        }
+
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: end;
+        }
+
+        label {
+            font-size: 12px;
+            color: #444;
+            margin-bottom: 5px;
+            display: block;
+        }
+
+        input, select {
+            padding: 8px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            min-width: 140px;
+        }
+
+        button {
+            padding: 9px 14px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .btn-main   { background: #111; color: #fff; }
+        .btn-update { background: #4a6cf7; color: #fff; }
+        .btn-delete { background: #e53935; color: #fff; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th, td {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            text-align: left;
+            vertical-align: middle;
+        }
+
+        .small { width: 90px; }
+        .status { margin-top: 8px; font-size: 13px; }
+        .ok { color: #1b7f3a; }
+        .err { color: #e53935; }
+
+        .cell-input {
+            width: 120px;
+            min-width: 120px;
+        }
+        .cell-select {
+            width: 90px;
+            min-width: 90px;
+        }
+    </style>
+</head>
+
+<body>
+
+<h1>Sports Club</h1>
+<div class="subtitle">Управление спортсменами</div>
+
+<div class="box">
+    <button class="btn-main" id="btnLoad">Показать спортсменов</button>
+    <div id="status" class="status"></div>
+</div>
+
+<div class="box">
+    <h3>Добавить спортсмена</h3>
+    <div class="row">
+        <div><label>Имя</label><input id="name"></div>
+        <div><label>Возраст</label><input id="age" type="number" min="1"></div>
+        <div><label>Вид спорта</label><input id="sportName"></div>
+
+        <div>
+            <label>Командный</label>
+            <select id="team">
+                <option value="true">Да</option>
+                <option value="false">Нет</option>
+            </select>
+        </div>
+
+        <div><label>Опыт</label><input id="experience" type="number" min="0" value="0"></div>
+        <div><label>Клуб</label><input id="clubName"></div>
+
+        <button class="btn-main" id="btnAdd">Добавить</button>
+    </div>
+</div>
+
+<div class="box">
+    <h3>Список спортсменов</h3>
+    <div style="overflow:auto;">
+        <table>
+            <thead>
+            <tr>
+                <th class="small">ID</th>
+                <th>Имя</th>
+                <th class="small">Возраст</th>
+                <th>Спорт</th>
+                <th class="small">Team</th>
+                <th class="small">Опыт</th>
+                <th>Клуб</th>
+                <th></th>
+            </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    // ✅ относительный API — работает на любом порту
+    const API = "";
+    const $ = (id) => document.getElementById(id);
+
+    function setStatus(msg, ok=true) {
+        const el = $("status");
+        el.className = "status " + (ok ? "ok" : "err");
+        el.textContent = msg;
+    }
+
+    async function readBody(res) {
+        const text = await res.text();
+        try { return JSON.parse(text); } catch { return text; }
+    }
+
+    function esc(str) {
+        return String(str ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    async function loadAthletes() {
+        try {
+            setStatus("Загрузка...", true);
+
+            const res = await fetch(API + "/athletes");
+            if (!res.ok) throw new Error("Не удалось загрузить список");
+
+            const data = await res.json();
+            const tbody = $("tbody");
+            tbody.innerHTML = "";
+
+            data.forEach(a => {
+                const id = a.athleteId;
+                const sportName = a.sport?.sportName ?? "";
+                const team = a.sport?.team ?? a.sport?.isTeam ?? false;
+                const clubName = a.clubName ?? "";
+
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                  <td class="small">${id}</td>
+
+                  <td><input class="cell-input" id="name_${id}" value="${esc(a.name)}"></td>
+
+                  <td class="small">
+                    <input class="cell-input" style="width:80px"
+                           type="number" min="1" id="age_${id}" value="${esc(a.age)}">
+                  </td>
+
+                  <td><input class="cell-input" id="sport_${id}" value="${esc(sportName)}"></td>
+
+                  <td class="small">
+                    <select class="cell-select" id="team_${id}">
+                      <option value="true" ${team ? "selected" : ""}>Да</option>
+                      <option value="false" ${!team ? "selected" : ""}>Нет</option>
+                    </select>
+                  </td>
+
+                  <td class="small">
+                    <input class="cell-input" style="width:80px"
+                           type="number" min="0" id="exp_${id}" value="${esc(a.experience)}">
+                  </td>
+
+                  <td><input class="cell-input" id="club_${id}" value="${esc(clubName)}"></td>
+
+                  <td>
+                    <button class="btn-update" data-upd="${id}">Update</button>
+                    <button class="btn-delete" data-del="${id}">Delete</button>
+                  </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            setStatus("Готово. Спортсменов: " + data.length, true);
+        } catch (e) {
+            setStatus(e.message, false);
+            console.error(e);
+        }
+    }
+
+    async function createAthlete() {
+        try {
+            const name = $("name").value.trim();
+            const age = +$("age").value;
+            const sportName = $("sportName").value.trim();
+            const team = $("team").value === "true";
+            const experience = +$("experience").value;
+            const clubName = $("clubName").value.trim();
+
+            if (!name) return setStatus("Имя обязательно", false);
+            if (!age || age < 1) return setStatus("Возраст должен быть больше 0", false);
+            if (!sportName) return setStatus("Вид спорта обязателен", false);
+            if (experience < 0) return setStatus("Опыт не может быть отрицательным", false);
+
+            const res = await fetch(API + "/athletes", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name, age, sportName, team, experience, clubName })
+            });
+
+            if (!res.ok) {
+                const body = await readBody(res);
+                return setStatus(body?.message || "Ошибка добавления", false);
+            }
+
+            setStatus("Добавлено ✅", true);
+            $("name").value = "";
+            $("age").value = "";
+            $("sportName").value = "";
+            $("experience").value = "0";
+            $("clubName").value = "";
+
+            await loadAthletes();
+        } catch (e) {
+            setStatus(e.message, false);
+        }
+    }
+
+    async function updateAthlete(id) {
+        try {
+            const name = $("name_" + id).value.trim();
+            const age = +$("age_" + id).value;
+            const sportName = $("sport_" + id).value.trim();
+            const team = $("team_" + id).value === "true";
+            const experience = +$("exp_" + id).value;
+            const clubName = $("club_" + id).value.trim();
+
+            if (!name || age < 1 || !sportName || experience < 0)
+                return setStatus("Проверьте введённые данные", false);
+
+            const res = await fetch(API + "/athletes/" + id, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name, age, sportName, team, experience, clubName })
+            });
+
+            if (!res.ok) {
+                const body = await readBody(res);
+                return setStatus(body?.message || "Ошибка обновления", false);
+            }
+
+            setStatus("Обновлено ✅", true);
+            await loadAthletes();
+        } catch (e) {
+            setStatus(e.message, false);
+        }
+    }
+
+    async function deleteAthlete(id) {
+        if (!confirm("Удалить спортсмена?")) return;
+
+        try {
+            const res = await fetch(API + "/athletes/" + id, { method: "DELETE" });
+            if (!(res.status === 204 || res.ok)) {
+                const body = await readBody(res);
+                return setStatus(body?.message || "Ошибка удаления", false);
+            }
+
+            setStatus("Удалено ✅", true);
+            await loadAthletes();
+        } catch (e) {
+            setStatus(e.message, false);
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        $("btnLoad").addEventListener("click", loadAthletes);
+        $("btnAdd").addEventListener("click", createAthlete);
+
+        $("tbody").addEventListener("click", (e) => {
+            const btn = e.target.closest("button");
+            if (!btn) return;
+            if (btn.dataset.upd) updateAthlete(btn.dataset.upd);
+            if (btn.dataset.del) deleteAthlete(btn.dataset.del);
+        });
+
+        loadAthletes();
+    });
+</script>
+
+</body>
+</html>
